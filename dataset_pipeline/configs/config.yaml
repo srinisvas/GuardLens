@@ -1,0 +1,17 @@
+dataset:
+  num_samples: 10000
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+generation:
+  attack_types:
+    - instruction_override
+    - role_hijack
+    - data_exfiltration
+    - obfuscation
+
+augmentation:
+  paraphrase: true
+  obfuscation: true
+  noise_level: 0.1
