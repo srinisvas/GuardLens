@@ -1,0 +1,43 @@
+{
+  "train_size": 3733,
+  "val_size": 800,
+  "test_size": 801,
+  "full_size": 5334,
+  "label_distribution": {
+    "train": {
+      "1": 2279,
+      "0": 1454
+    },
+    "val": {
+      "1": 489,
+      "0": 311
+    },
+    "test": {
+      "1": 489,
+      "0": 312
+    }
+  },
+  "source_distribution": {
+    "train": {
+      "hf:train": 1605,
+      "jailbreak_llms": 969,
+      "hf:validation": 532,
+      "hf:test": 502,
+      "synthetic": 125
+    },
+    "val": {
+      "hf:train": 342,
+      "jailbreak_llms": 185,
+      "hf:test": 141,
+      "hf:validation": 106,
+      "synthetic": 26
+    },
+    "test": {
+      "hf:train": 334,
+      "jailbreak_llms": 202,
+      "hf:validation": 121,
+      "hf:test": 115,
+      "synthetic": 29
+    }
+  }
+}
