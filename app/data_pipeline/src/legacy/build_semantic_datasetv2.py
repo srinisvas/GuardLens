@@ -1170,5 +1170,5 @@ if __name__ == "__main__":
         tokenizer_name=None,
         use_local_paraphraser=False
     )
-    write_jsonl(data, "data/semantic/semantic_multiturn_v2.jsonl")
+    write_jsonl(data, "../data/semantic/semantic_multiturn_v2.jsonl")
     print(f"Wrote {len(data)} samples to semantic_multiturn_v2.jsonl")
