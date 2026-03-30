@@ -1,0 +1,20 @@
+# GuardLens minimal runtime requirements
+# NOTE: Install `torch` with the CUDA/CPU wheel that matches your system (see https://pytorch.org).
+# Example for CPU-only: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# For GPU, follow the official PyTorch install command for your CUDA version.
+
+# Core ML framework
+torch
+torchvision
+
+# Hugging Face Transformers (includes tokenizers)
+transformers>=4.30.0
+tokenizers
+
+# Data and ML utilities
+numpy>=1.23
+scikit-learn>=1.0
+
+# Small helpers
+tqdm>=4.60
+
