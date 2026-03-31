@@ -156,4 +156,4 @@ def run_training(data_path: str, epochs: int = 10, batch_size: int = 16):
 
 
 if __name__ == "__main__":
-    run_training("../data_pipeline/data/semantic/semantic_multiturn_v6.jsonl")
+    run_training("app/data_pipeline/data/semantic/semantic_multiturn_v6.jsonl")
