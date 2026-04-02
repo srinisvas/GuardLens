@@ -156,4 +156,32 @@ def run_training(data_path: str, model_type: str = "model3", epochs: int = 5, ba
     return model, test_metrics, test_diff
 
 if __name__ == "__main__":
-    run_training("app/data_pipeline/data/semantic/semantic_multiturn_v7.jsonl")
+    data_path = "app/data_pipeline/data/semantic/semantic_multiturn_v7.jsonl"
+
+    results = {}
+    for model_type in ["model1", "model2", "model3"]:
+        print("\n" + "=" * 80)
+        print(f"Running {model_type}")
+        print("=" * 80)
+
+        _, test_metrics, test_diff = run_training(
+            data_path=data_path,
+            model_type=model_type,
+            epochs=5,
+            batch_size=16,
+        )
+
+        results[model_type] = {
+            "overall": test_metrics,
+            "by_difficulty": test_diff,
+        }
+
+    print("\n\n===== FINAL COMPARISON =====")
+    for model_type, res in results.items():
+        m = res["overall"]
+        print(
+            f"{model_type}: "
+            f"Acc={m['acc']:.4f}  "
+            f"F1={m['f1']:.4f}  "
+            f"AUC={m['auc']:.4f}"
+        )
