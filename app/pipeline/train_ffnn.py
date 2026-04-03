@@ -134,9 +134,9 @@ def run_training(data_path: str, model_type: str = "model3", epochs: int = 5, ba
 
         print(
             f"Epoch {epoch+1}/{epochs}  loss={loss:.4f}  "
-            f"val_acc={val_metrics['acc']:.4f}  "
-            f"val_f1={val_metrics['f1']:.4f}  "
-            f"val_auc={val_metrics['auc']:.4f}"
+            f"Validation Accuracy={val_metrics['acc']:.4f}  "
+            f"Validation F1={val_metrics['f1']:.4f}  "
+            f"Validation AUC={val_metrics['auc']:.4f}"
         )
 
         if val_metrics["f1"] > best_val_f1:
@@ -150,7 +150,7 @@ def run_training(data_path: str, model_type: str = "model3", epochs: int = 5, ba
 
     test_metrics, test_diff = evaluate(model, test_loader, device, "test")
 
-    print("\n=== Final Test Results ===")
+    print("\nFinal Test Results")
     print(f"Acc={test_metrics['acc']:.4f}  F1={test_metrics['f1']:.4f}  AUC={test_metrics['auc']:.4f}")
 
     return model, test_metrics, test_diff
@@ -167,7 +167,7 @@ if __name__ == "__main__":
         _, test_metrics, test_diff = run_training(
             data_path=data_path,
             model_type=model_type,
-            epochs=5,
+            epochs=10,
             batch_size=16,
         )
 
@@ -176,7 +176,7 @@ if __name__ == "__main__":
             "by_difficulty": test_diff,
         }
 
-    print("\n\n===== FINAL COMPARISON =====")
+    print("\n\nFINAL EVALUATION SUMMARY:")
     for model_type, res in results.items():
         m = res["overall"]
         print(

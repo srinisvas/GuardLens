@@ -17,11 +17,11 @@ class BottleneckFFNN(nn.Module):
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1 = self.drop(F.relu(self.pre(x)))
-        x2 = self.drop(F.relu(self.b1(x1)))
-        x3 = self.drop(F.relu(self.b2(x2)))
-        x4 = self.drop(F.relu(self.b3(x3)))
-        x5 = self.drop(F.relu(self.post(x4)))
+        x1 = self.drop(F.relu(self.pre(x))) # 768 -> 256
+        x2 = self.drop(F.relu(self.b1(x1))) # 256 -> 128
+        x3 = self.drop(F.relu(self.b2(x2))) #
+        x4 = self.drop(F.relu(self.b3(x3))) # 64 -> 128
+        x5 = self.drop(F.relu(self.post(x4))) # 128 -> 64
         return self.out(x5)
 
 class ParallelMultiPathFFNN(nn.Module):
@@ -40,15 +40,15 @@ class ParallelMultiPathFFNN(nn.Module):
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1 = self.drop(F.relu(self.pre(x)))
-        x2 = self.drop(F.relu(self.path_a(x1)))
-        x3 = self.drop(F.relu(self.path_b1(x1)))
-        x4 = self.drop(F.relu(self.path_b2(x3)))
-        x5 = self.drop(F.relu(self.path_b3(x4)))
+        x1 = self.drop(F.relu(self.pre(x))) # 768 -> 256
+        x2 = self.drop(F.relu(self.path_a(x1))) # 256 -> 128
+        x3 = self.drop(F.relu(self.path_b1(x1))) # 256 -> 128
+        x4 = self.drop(F.relu(self.path_b2(x3))) # 128 -> 64
+        x5 = self.drop(F.relu(self.path_b3(x4))) # 64 -> 128
 
-        fused = torch.cat([x2, x5], dim=-1)
-        fused = self.drop(F.relu(self.fusion(fused)))
-        fused = self.drop(F.relu(self.post(fused)))
+        fused = torch.cat([x2, x5], dim=-1) # 128 + 128 -> 256
+        fused = self.drop(F.relu(self.fusion(fused))) # 256 -> 128
+        fused = self.drop(F.relu(self.post(fused))) # 128 -> 64
 
         return self.out(fused)
 
@@ -67,9 +67,9 @@ class FFNNClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
-        x1 = self.drop(F.relu(self.fc1(x)))
-        x2 = self.drop(F.relu(self.fc2(x1) + self.skip(x1)))
-        x3 = self.drop(F.relu(self.fc3(x2)))
+        x1 = self.drop(F.relu(self.fc1(x))) # 768 -> 256
+        x2 = self.drop(F.relu(self.fc2(x1) + self.skip(x1))) # 256 -> 128 with skip connection
+        x3 = self.drop(F.relu(self.fc3(x2))) # 128 -> 64
 
         return self.out(x3)
 
