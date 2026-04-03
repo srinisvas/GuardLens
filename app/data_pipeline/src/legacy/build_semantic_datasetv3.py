@@ -1725,5 +1725,5 @@ if __name__ == "__main__":
         dedup=True,
         dedup_threshold=0.70,
     )
-    write_jsonl(data, "../data/semantic/semantic_multiturn_v3.jsonl")
+    write_jsonl(data, "../../data/semantic/semantic_multiturn_v3.jsonl")
     print(f"Wrote {len(data)} samples to semantic_multiturn_v3.jsonl")
