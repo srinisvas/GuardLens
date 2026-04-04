@@ -159,7 +159,7 @@ if __name__ == "__main__":
     data_path = "app/data_pipeline/data/semantic/semantic_multiturn_v7.jsonl"
 
     results = {}
-    for model_type in ["model1", "model2", "model3"]:
+    for model_type in ["model3"]:
         print("\n" + "=" * 80)
         print(f"Running {model_type}")
         print("=" * 80)
