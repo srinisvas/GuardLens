@@ -1,7 +1,14 @@
 import torch
 import torch.nn as nn
 from collections import defaultdict
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+    precision_score,
+    recall_score,
+)
 
 from app.models.embedding import EmbeddingModel
 from app.models.ff_nn_classifier import (
@@ -10,6 +17,61 @@ from app.models.ff_nn_classifier import (
     FFNNClassifier,
 )
 from app.utils.utils import create_dataloaders
+
+def precompute_embeddings(loader, embedder, device):
+
+    embedder.eval()
+    cache = []
+
+    with torch.no_grad():
+        for batch in loader:
+            input_ids = batch["input_ids"].to(device)
+            mask      = batch["attention_mask"].to(device)
+            labels    = batch["label"]           # keep on CPU
+            diffs     = batch["difficulty"]
+            sr        = batch["max_surface_risk"]
+
+            embs = embedder(input_ids, mask).cpu()  # [B, D]
+
+            for i in range(embs.size(0)):
+                cache.append({
+                    "emb":              embs[i],
+                    "label":            labels[i].item(),
+                    "difficulty":       diffs[i],
+                    "max_surface_risk": sr[i].item(),
+                })
+
+    return cache
+
+
+def make_cached_loader(cache, batch_size, shuffle):
+
+    from torch.utils.data import DataLoader, Dataset
+
+    class CachedEmbDataset(Dataset):
+        def __init__(self, records):
+            self.records = records
+
+        def __len__(self):
+            return len(self.records)
+
+        def __getitem__(self, idx):
+            return self.records[idx]
+
+    def collate(batch):
+        return {
+            "emb":              torch.stack([b["emb"] for b in batch]),
+            "label":            torch.tensor([b["label"] for b in batch], dtype=torch.float32),
+            "difficulty":       [b["difficulty"] for b in batch],
+            "max_surface_risk": torch.tensor([b["max_surface_risk"] for b in batch]),
+        }
+
+    return DataLoader(
+        CachedEmbDataset(cache),
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=collate,
+    )
 
 class FullModel(nn.Module):
     def __init__(self, model_type: str = "model3", pooling: str = "mean"):
@@ -29,18 +91,23 @@ class FullModel(nn.Module):
         x = self.embedder(input_ids, attention_mask)
         return self.classifier(x)
 
-def train(model, loader, optimizer, criterion, device):
-    model.train()
+def count_parameters(model):
+
+    total     = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return total, trainable
+
+def train_on_cache(classifier, loader, optimizer, criterion, device):
+
+    classifier.train()
     total_loss = 0.0
 
     for batch in loader:
-        input_ids = batch["input_ids"].to(device)
-        mask      = batch["attention_mask"].to(device)
-        labels    = batch["label"].to(device)
+        emb    = batch["emb"].to(device)      # [B, D]
+        labels = batch["label"].to(device)    # [B]
 
-        logits = model(input_ids, mask).squeeze(-1)
-
-        loss = criterion(logits, labels)
+        logits = classifier(emb).squeeze(-1)
+        loss   = criterion(logits, labels)
 
         optimizer.zero_grad()
         loss.backward()
@@ -50,21 +117,20 @@ def train(model, loader, optimizer, criterion, device):
 
     return total_loss / len(loader)
 
-def evaluate(model, loader, device, split_name: str = ""):
+def evaluate_on_cache(classifier, loader, device, split_name: str = ""):
 
-    model.eval()
+    classifier.eval()
 
     all_probs, all_preds, all_labels = [], [], []
     by_diff: dict = defaultdict(lambda: {"probs": [], "preds": [], "labels": []})
 
     with torch.no_grad():
         for batch in loader:
-            input_ids = batch["input_ids"].to(device)
-            mask      = batch["attention_mask"].to(device)
-            labels    = batch["label"].to(device)
-            diffs     = batch["difficulty"]      # list[str], not a tensor
+            emb    = batch["emb"].to(device)
+            labels = batch["label"].to(device)
+            diffs  = batch["difficulty"]
 
-            logits = model(input_ids, mask).squeeze(-1)   # [B]
+            logits = classifier(emb).squeeze(-1)
             probs  = torch.sigmoid(logits)
             preds  = (probs > 0.5).float()
 
@@ -82,24 +148,51 @@ def evaluate(model, loader, device, split_name: str = ""):
                 by_diff[diff]["preds"].append(pred)
                 by_diff[diff]["labels"].append(label)
 
-    acc = accuracy_score(all_labels, all_preds)
-    f1  = f1_score(all_labels, all_preds, zero_division=0)
-    auc = roc_auc_score(all_labels, all_probs)
+    int_labels = [int(l) for l in all_labels]
+    int_preds  = [int(p) for p in all_preds]
+
+    acc       = accuracy_score(int_labels, int_preds)
+    f1        = f1_score(int_labels, int_preds, zero_division=0)
+    auc       = roc_auc_score(int_labels, all_probs)
+    precision = precision_score(int_labels, int_preds, zero_division=0)
+    recall    = recall_score(int_labels, int_preds, zero_division=0)
+    cm        = confusion_matrix(int_labels, int_preds).tolist()  # [[TN,FP],[FN,TP]]
+
+    metrics = {
+        "acc":       acc,
+        "f1":        f1,
+        "auc":       auc,
+        "precision": precision,
+        "recall":    recall,
+        "cm":        cm,
+    }
 
     diff_results = {}
     for diff, vals in by_diff.items():
-        d_acc = accuracy_score(vals["labels"], vals["preds"])
-        d_f1  = f1_score(vals["labels"], vals["preds"], zero_division=0)
-        d_auc = roc_auc_score(vals["labels"], vals["probs"]) if len(set(vals["labels"])) > 1 else float("nan")
-        diff_results[diff] = {"acc": d_acc, "f1": d_f1, "auc": d_auc, "n": len(vals["labels"])}
+        d_int_labels = [int(l) for l in vals["labels"]]
+        d_int_preds  = [int(p) for p in vals["preds"]]
+        d_acc        = accuracy_score(d_int_labels, d_int_preds)
+        d_f1         = f1_score(d_int_labels, d_int_preds, zero_division=0)
+        d_prec       = precision_score(d_int_labels, d_int_preds, zero_division=0)
+        d_rec        = recall_score(d_int_labels, d_int_preds, zero_division=0)
+        d_auc        = (
+            roc_auc_score(d_int_labels, vals["probs"])
+            if len(set(d_int_labels)) > 1
+            else float("nan")
+        )
+        diff_results[diff] = {
+            "acc": d_acc, "f1": d_f1, "auc": d_auc,
+            "precision": d_prec, "recall": d_rec,
+            "n": len(d_int_labels),
+        }
 
-    return {"acc": acc, "f1": f1, "auc": auc}, diff_results
+    return metrics, diff_results
 
 def evaluate_surface_risk_baseline(loader, threshold: float = 0.3):
     all_preds, all_labels = [], []
 
     for batch in loader:
-        sr     = batch["max_surface_risk"]   # [B], already a tensor
+        sr     = batch["max_surface_risk"]
         labels = batch["label"]
 
         preds = (sr > threshold).float()
@@ -110,50 +203,130 @@ def evaluate_surface_risk_baseline(loader, threshold: float = 0.3):
     f1  = f1_score(all_labels, all_preds, zero_division=0)
     return {"acc": acc, "f1": f1}
 
-def run_training(data_path: str, model_type: str = "model3", epochs: int = 5, batch_size: int = 16):
+def print_metrics(metrics: dict, prefix: str = ""):
+    cm = metrics["cm"]
+    tn, fp, fn, tp = cm[0][0], cm[0][1], cm[1][0], cm[1][1]
+    tag = f"[{prefix}] " if prefix else ""
+    print(
+        f"{tag}Acc={metrics['acc']:.4f}  "
+        f"F1={metrics['f1']:.4f}  "
+        f"AUC={metrics['auc']:.4f}  "
+        f"Prec={metrics['precision']:.4f}  "
+        f"Rec={metrics['recall']:.4f}"
+    )
+    print(f"{tag}Confusion Matrix  TN={tn}  FP={fp}  FN={fn}  TP={tp}")
+
+def print_diff_results(diff_results: dict, prefix: str = ""):
+    tag = f"[{prefix}] " if prefix else ""
+    for diff, m in sorted(diff_results.items()):
+        print(
+            f"  {tag}{diff} (n={m['n']})  "
+            f"Acc={m['acc']:.4f}  F1={m['f1']:.4f}  "
+            f"AUC={m['auc']:.4f}  Prec={m['precision']:.4f}  Rec={m['recall']:.4f}"
+        )
+
+def run_training(
+    data_path:  str,
+    model_type: str = "model3",
+    epochs:     int = 5,
+    batch_size: int = 16,
+):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-    print(f"Training architecture: {model_type}")
+    print(f"Architecture: {model_type}")
 
     train_loader, val_loader, test_loader = create_dataloaders(
         data_path, batch_size=batch_size
     )
 
-    model = FullModel(model_type=model_type, pooling="mean").to(device)
+    embedder = EmbeddingModel(pooling="mean").to(device)
 
-    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = torch.optim.Adam(trainable_params, lr=1e-4)
+    print("Precomputing embeddings for train/val/test splits...")
+    train_cache = precompute_embeddings(train_loader, embedder, device)
+    val_cache   = precompute_embeddings(val_loader,   embedder, device)
+    test_cache  = precompute_embeddings(test_loader,  embedder, device)
+    print(f"  Train: {len(train_cache)}  Val: {len(val_cache)}  Test: {len(test_cache)}")
+
+    cached_train = make_cached_loader(train_cache, batch_size, shuffle=True)
+    cached_val   = make_cached_loader(val_cache,   batch_size, shuffle=False)
+    cached_test  = make_cached_loader(test_cache,  batch_size, shuffle=False)
+
+    if model_type == "model1":
+        classifier = BottleneckFFNN()
+    elif model_type == "model2":
+        classifier = ParallelMultiPathFFNN()
+    elif model_type == "model3":
+        classifier = FFNNClassifier()
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
+
+    classifier = classifier.to(device)
+
+    total_params, trainable_params = count_parameters(classifier)
+    embedder_total, _ = count_parameters(embedder)
+    print(f"Classifier params — Total: {total_params:,}  Trainable: {trainable_params:,}")
+    print(f"Embedder params   — Total: {embedder_total:,}  Trainable: 0 (frozen)")
+
+    optimizer = torch.optim.Adam(classifier.parameters(), lr=1e-4)
     criterion = nn.BCEWithLogitsLoss()
 
-    best_val_f1 = 0.0
-    best_state = None
+    best_val_f1  = 0.0
+    best_state   = None
+
+    epoch_history = []
 
     for epoch in range(epochs):
-        loss = train(model, train_loader, optimizer, criterion, device)
-        val_metrics, _ = evaluate(model, val_loader, device, "val")
+        loss = train_on_cache(classifier, cached_train, optimizer, criterion, device)
 
+        train_metrics, _ = evaluate_on_cache(classifier, cached_train, device, "train")
+        val_metrics,   _ = evaluate_on_cache(classifier, cached_val,   device, "val")
+
+        gap_acc = train_metrics["acc"] - val_metrics["acc"]
+        gap_f1  = train_metrics["f1"]  - val_metrics["f1"]
+        gap_auc = train_metrics["auc"] - val_metrics["auc"]
+
+        epoch_history.append({
+            "epoch":      epoch + 1,
+            "loss":       loss,
+            "train":      train_metrics,
+            "val":        val_metrics,
+            "gap_acc":    gap_acc,
+            "gap_f1":     gap_f1,
+            "gap_auc":    gap_auc,
+        })
+
+        print(f"\nEpoch {epoch+1}/{epochs}  loss={loss:.4f}")
+        print_metrics(train_metrics, prefix="Train")
+        print_metrics(val_metrics,   prefix="Val")
         print(
-            f"Epoch {epoch+1}/{epochs}  loss={loss:.4f}  "
-            f"Validation Accuracy={val_metrics['acc']:.4f}  "
-            f"Validation F1={val_metrics['f1']:.4f}  "
-            f"Validation AUC={val_metrics['auc']:.4f}"
+            f"  Overfitting gap —  "
+            f"Acc: {gap_acc:+.4f}  F1: {gap_f1:+.4f}  AUC: {gap_auc:+.4f}"
         )
+        print("-" * 70)
 
         if val_metrics["f1"] > best_val_f1:
             best_val_f1 = val_metrics["f1"]
-            best_state = {k: v.clone() for k, v in model.state_dict().items()}
-
-        print("-" * 60)
+            best_state  = {k: v.clone() for k, v in classifier.state_dict().items()}
 
     if best_state is not None:
-        model.load_state_dict(best_state)
+        classifier.load_state_dict(best_state)
 
-    test_metrics, test_diff = evaluate(model, test_loader, device, "test")
+    test_metrics, test_diff = evaluate_on_cache(classifier, cached_test, device, "test")
 
-    print("\nFinal Test Results")
-    print(f"Acc={test_metrics['acc']:.4f}  F1={test_metrics['f1']:.4f}  AUC={test_metrics['auc']:.4f}")
+    print("\n" + "=" * 70)
+    print("FINAL TEST RESULTS")
+    print_metrics(test_metrics, prefix="Test")
+    print("\nPer-difficulty breakdown:")
+    print_diff_results(test_diff, prefix="Test")
 
-    return model, test_metrics, test_diff
+    # Summarise overfitting gap at final epoch
+    last = epoch_history[-1]
+    print(f"\nOverfitting gap at final epoch — "
+          f"Acc: {last['gap_acc']:+.4f}  "
+          f"F1: {last['gap_f1']:+.4f}  "
+          f"AUC: {last['gap_auc']:+.4f}")
+
+    return classifier, test_metrics, test_diff, epoch_history
 
 if __name__ == "__main__":
     data_path = "app/data_pipeline/data/semantic/semantic_multiturn_v7.jsonl"
@@ -164,7 +337,7 @@ if __name__ == "__main__":
         print(f"Running {model_type}")
         print("=" * 80)
 
-        _, test_metrics, test_diff = run_training(
+        _, test_metrics, test_diff, history = run_training(
             data_path=data_path,
             model_type=model_type,
             epochs=10,
@@ -172,16 +345,26 @@ if __name__ == "__main__":
         )
 
         results[model_type] = {
-            "overall": test_metrics,
+            "overall":       test_metrics,
             "by_difficulty": test_diff,
+            "history":       history,
         }
 
-    print("\n\nFINAL EVALUATION SUMMARY:")
+    print("\n\nFINAL EVALUATION SUMMARY")
+    print("=" * 80)
+    header = f"{'Model':<10} {'Acc':>6} {'F1':>6} {'AUC':>6} {'Prec':>6} {'Rec':>6}  Confusion[TN,FP,FN,TP]"
+    print(header)
+    print("-" * len(header))
     for model_type, res in results.items():
-        m = res["overall"]
+        m  = res["overall"]
+        cm = m["cm"]
+        tn, fp, fn, tp = cm[0][0], cm[0][1], cm[1][0], cm[1][1]
         print(
-            f"{model_type}: "
-            f"Acc={m['acc']:.4f}  "
-            f"F1={m['f1']:.4f}  "
-            f"AUC={m['auc']:.4f}"
+            f"{model_type:<10} "
+            f"{m['acc']:>6.4f} "
+            f"{m['f1']:>6.4f} "
+            f"{m['auc']:>6.4f} "
+            f"{m['precision']:>6.4f} "
+            f"{m['recall']:>6.4f}  "
+            f"[{tn},{fp},{fn},{tp}]"
         )
