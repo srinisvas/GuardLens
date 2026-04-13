@@ -102,8 +102,8 @@ Advisor: **Md Abdullah Al Hafiz Khan**
 
 ## Contact
 
-📧 your_email@kennesaw.edu  
-🔗 GitHub: https://github.com/yourname/GuardLens
+📧 ssubram7@students.kennesaw.edu  
+🔗 GitHub: https://github.com/srinisvas/GuardLens
 
 ---
 
