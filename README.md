@@ -78,3 +78,35 @@ We construct a synthetic multi-turn dataset with:
     }
   ]
 }
+
+
+---
+
+## Future Work
+
+- Causal validation via token removal experiments
+- Extension to real-world LLM interaction logs
+- Integration with safety monitoring systems
+- Robust attribution benchmarking
+
+---
+
+## Authors
+
+**Srinivasan Subramanian**  
+Kennesaw State University  
+
+Advisor: **Md Abdullah Al Hafiz Khan**
+
+---
+
+## Contact
+
+📧 your_email@kennesaw.edu  
+🔗 GitHub: https://github.com/yourname/GuardLens
+
+---
+
+## Acknowledgments
+
+This work is part of ongoing research in LLM safety, interpretability, and adversarial robustness.
